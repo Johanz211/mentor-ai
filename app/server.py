@@ -3,6 +3,8 @@
 import os
 import json
 import uuid
+import asyncio
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Form, Request
@@ -13,6 +15,8 @@ import httpx
 from .mentors import MENTORS
 from .file_parser import parse_file
 from . import db
+
+logger = logging.getLogger("mentor-ai")
 
 app = FastAPI(title="Mentor AI")
 
@@ -288,3 +292,110 @@ JSON output:"""
 
     except Exception as e:
         return JSONResponse({"error": f"Generation failed: {str(e)}"}, status_code=500)
+
+
+# ── Auto Flashcard Cron ──
+
+AUTO_FC_INTERVAL = int(os.environ.get("AUTO_FC_HOURS", "4")) * 3600  # default 4 hours
+AUTO_FC_MIN_MESSAGES = 6  # need at least 6 new messages (3 exchanges) to generate
+
+
+async def _auto_generate_for_mentor(mentor_key: str):
+    """Generate flashcards from new messages for a single mentor."""
+    cursor = db.get_fc_cursor(mentor_key)
+    new_msgs, max_id = db.get_new_messages(mentor_key, cursor, limit=40)
+
+    if len(new_msgs) < AUTO_FC_MIN_MESSAGES:
+        return 0
+
+    conv_text = ""
+    for msg in new_msgs:
+        role = "Student" if msg["role"] == "user" else "Mentor"
+        conv_text += f"{role}: {msg['content']}\n\n"
+
+    prompt = f"""Analyze this conversation and extract 3-5 flashcards for studying.
+Each flashcard should test ONE specific concept discussed.
+
+Rules:
+- Question should be specific and testable (not vague)
+- Answer should be concise (1-3 sentences max)
+- Focus on facts, definitions, code patterns, and key concepts
+- Do NOT create duplicate or near-duplicate cards
+- Output ONLY valid JSON array, no other text
+
+Format:
+[{{"q": "What does 0xFF represent in binary?", "a": "0xFF = 0b11111111 (all 8 bits set to 1), decimal 255"}}]
+
+Conversation:
+{conv_text[:4000]}
+
+JSON output:"""
+
+    mentor_def = MENTORS.get(mentor_key, {})
+    fc_model = mentor_def.get("model", OLLAMA_MODEL)
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": fc_model, "prompt": prompt, "stream": False},
+            )
+            raw = resp.json().get("response", "")
+
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                raw = raw.rsplit("```", 1)[0]
+            raw = raw.strip()
+
+            cards = json.loads(raw)
+            count = 0
+            for card in cards:
+                if "q" in card and "a" in card:
+                    db.add_flashcard(mentor_key, card["q"], card["a"])
+                    count += 1
+
+            # Update cursor so we don't reprocess these messages
+            db.set_fc_cursor(mentor_key, max_id)
+            return count
+
+    except Exception as e:
+        logger.warning(f"Auto flashcard generation failed for {mentor_key}: {e}")
+        return 0
+
+
+async def _auto_fc_loop():
+    """Background loop that generates flashcards periodically."""
+    await asyncio.sleep(30)  # initial delay to let server settle
+    logger.info(f"Auto flashcard cron started (every {AUTO_FC_INTERVAL // 3600}h)")
+
+    while True:
+        try:
+            mentors_with_chat = db.get_all_mentors_with_messages()
+            total = 0
+            for mk in mentors_with_chat:
+                count = await _auto_generate_for_mentor(mk)
+                if count > 0:
+                    logger.info(f"Auto-generated {count} flashcards for [{mk}]")
+                    total += count
+            if total > 0:
+                logger.info(f"Auto flashcard cron: {total} cards created across {len(mentors_with_chat)} mentors")
+        except Exception as e:
+            logger.warning(f"Auto flashcard cron error: {e}")
+
+        await asyncio.sleep(AUTO_FC_INTERVAL)
+
+
+_auto_fc_task = None
+
+
+@app.on_event("startup")
+async def startup_auto_fc():
+    global _auto_fc_task
+    _auto_fc_task = asyncio.create_task(_auto_fc_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_auto_fc():
+    if _auto_fc_task:
+        _auto_fc_task.cancel()

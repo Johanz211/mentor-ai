@@ -54,6 +54,12 @@ def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_fc_mentor ON flashcards(mentor);
         CREATE INDEX IF NOT EXISTS idx_fc_review ON flashcards(next_review);
+
+        CREATE TABLE IF NOT EXISTS fc_auto_cursor (
+            mentor TEXT PRIMARY KEY,
+            last_msg_id INTEGER DEFAULT 0,
+            last_run TEXT DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
     conn.close()
@@ -251,6 +257,55 @@ def get_flashcard_stats(mentor: str) -> dict:
     ).fetchone()["cnt"]
     conn.close()
     return {"total": total, "due": due, "mastered": mastered}
+
+
+# ── Auto Flashcard Cursor ──
+
+def get_fc_cursor(mentor: str) -> int:
+    """Get the last message ID processed for auto flashcard generation."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT last_msg_id FROM fc_auto_cursor WHERE mentor = ?", (mentor,)
+    ).fetchone()
+    conn.close()
+    return row["last_msg_id"] if row else 0
+
+
+def set_fc_cursor(mentor: str, last_msg_id: int):
+    conn = _connect()
+    conn.execute(
+        "INSERT OR REPLACE INTO fc_auto_cursor (mentor, last_msg_id, last_run) "
+        "VALUES (?, ?, datetime('now'))",
+        (mentor, last_msg_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_new_messages(mentor: str, since_id: int, limit: int = 40) -> tuple[list[dict], int]:
+    """Get messages newer than since_id. Returns (messages, max_id)."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, role, content FROM chat_messages "
+        "WHERE mentor = ? AND id > ? ORDER BY id ASC LIMIT ?",
+        (mentor, since_id, limit),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return [], since_id
+    messages = [{"role": r["role"], "content": r["content"]} for r in rows]
+    max_id = rows[-1]["id"]
+    return messages, max_id
+
+
+def get_all_mentors_with_messages() -> list[str]:
+    """Return mentor keys that have at least one message."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT DISTINCT mentor FROM chat_messages"
+    ).fetchall()
+    conn.close()
+    return [r["mentor"] for r in rows]
 
 
 # Initialize on import
