@@ -2,14 +2,8 @@
    Mentor AI — Frontend Logic
    ═══════════════════════════════════════════ */
 
-function generateId() {
-    try { return crypto.randomUUID(); } catch (e) {}
-    return "s-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
-}
-
 const state = {
     mentor: "embedded",
-    sessionId: generateId(),
     streaming: false,
     files: [],
 };
@@ -75,6 +69,7 @@ const QUICK_STARTS = {
 async function init() {
     await loadMentors();
     await loadFiles();
+    await loadHistory(state.mentor);
 }
 
 async function loadMentors() {
@@ -124,16 +119,40 @@ function selectMentor(key, m) {
     // Reload files for this mentor
     loadFiles();
 
-    // Show welcome with new quick starts if chat is empty
-    const welcome = document.getElementById("welcome");
-    if (welcome) {
-        renderQuickStarts(key);
-    } else if (previous !== key) {
-        // Mentor switched mid-conversation — clear and show system message
-        clearChat();
-        const welcome2 = document.getElementById("welcome");
-        if (welcome2) welcome2.remove();
-        addSystemMessage(`Switched to ${m.icon} ${m.name}`);
+    // Load persisted history for this mentor
+    if (previous !== key) {
+        loadHistory(key);
+    }
+}
+
+async function loadHistory(mentorKey) {
+    try {
+        const resp = await fetch(`/api/history/${mentorKey}`);
+        const data = await resp.json();
+        const messages = document.getElementById("messages");
+
+        if (data.messages && data.messages.length > 0) {
+            // Has history — render it
+            messages.innerHTML = "";
+            for (const msg of data.messages) {
+                addMessage(msg.role, msg.role === "user" ? msg.content :
+                    (typeof marked !== "undefined" ? marked.parse(msg.content) : msg.content));
+            }
+            addSystemMessage(`📜 ${data.total} messages restored`);
+        } else {
+            // No history — show welcome
+            messages.innerHTML = `
+                <div class="welcome-message" id="welcome">
+                    <div class="welcome-icon">🎓</div>
+                    <h2>Welcome to Mentor AI</h2>
+                    <p>Pick a mentor from the sidebar and ask anything.<br>Upload code files for context-aware help.</p>
+                    <div class="quick-starts" id="quick-starts"></div>
+                </div>
+            `;
+            renderQuickStarts(mentorKey);
+        }
+    } catch (e) {
+        console.error("Failed to load history:", e);
     }
 }
 
@@ -279,8 +298,6 @@ async function sendMessage() {
             body: JSON.stringify({
                 mentor: state.mentor,
                 message: text,
-                session_id: state.sessionId,
-                file_ids: state.files.map(f => f.id),
             }),
         });
 
@@ -365,7 +382,7 @@ async function clearChat() {
         await fetch("/api/clear", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session_id: state.sessionId }),
+            body: JSON.stringify({ mentor: state.mentor }),
         });
     } catch (e) { /* ok */ }
 

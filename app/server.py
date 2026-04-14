@@ -12,6 +12,7 @@ import httpx
 
 from .mentors import MENTORS
 from .file_parser import parse_file
+from . import db
 
 app = FastAPI(title="Mentor AI")
 
@@ -22,9 +23,22 @@ STATIC_DIR = Path(__file__).parent / "static"
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# In-memory state
-file_store = {}  # {file_id: {name, content, path, size, mentor}}
-sessions = {}    # {session_id: {mentor, messages}}
+# In-memory cache for file content (text parsed from uploads)
+# Metadata lives in SQLite; content is parsed fresh or cached here
+_file_content_cache = {}
+
+
+def _load_file_content(file_id: str, filepath: str, filename: str) -> str:
+    """Load and cache parsed file content."""
+    if file_id in _file_content_cache:
+        return _file_content_cache[file_id]
+    if os.path.exists(filepath):
+        with open(filepath, "rb") as f:
+            text = parse_file(filename, f.read())
+        _file_content_cache[file_id] = text
+        return text
+    return ""
+
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -44,10 +58,8 @@ async def list_mentors():
 
 @app.get("/api/files")
 async def list_files(mentor: str = ""):
-    files = file_store.values()
-    if mentor:
-        files = [f for f in files if f.get("mentor") == mentor]
-    return [{"id": f["id"], "name": f["name"], "size": f["size"], "mentor": f.get("mentor", "")} for f in files]
+    files = db.get_files(mentor)
+    return [{"id": f["id"], "name": f["name"], "size": f["size"], "mentor": f["mentor"]} for f in files]
 
 
 @app.post("/api/upload")
@@ -60,28 +72,33 @@ async def upload_file(file: UploadFile = File(...), mentor: str = Form("")):
         f.write(content_bytes)
 
     text_content = parse_file(file.filename, content_bytes)
+    _file_content_cache[file_id] = text_content
 
-    file_store[file_id] = {
-        "id": file_id,
-        "name": file.filename,
-        "content": text_content,
-        "path": str(file_path),
-        "size": len(content_bytes),
-        "mentor": mentor,
-    }
+    db.save_file_meta(file_id, file.filename, str(file_path), len(content_bytes), mentor)
 
     return {"id": file_id, "name": file.filename, "size": len(content_bytes), "mentor": mentor}
 
 
 @app.delete("/api/files/{file_id}")
 async def delete_file(file_id: str):
-    if file_id in file_store:
-        path = file_store[file_id]["path"]
+    files = db.get_files()
+    match = [f for f in files if f["id"] == file_id]
+    if match:
+        path = match[0]["path"]
         if os.path.exists(path):
             os.remove(path)
-        del file_store[file_id]
+        db.delete_file_meta(file_id)
+        _file_content_cache.pop(file_id, None)
         return {"ok": True}
     return JSONResponse({"error": "Not found"}, status_code=404)
+
+
+@app.get("/api/history/{mentor}")
+async def get_history(mentor: str):
+    """Get full chat history for a mentor (for UI restore on load)."""
+    messages = db.get_history(mentor, limit=200)
+    count = db.get_message_count(mentor)
+    return {"mentor": mentor, "messages": messages, "total": count}
 
 
 @app.post("/api/chat")
@@ -89,44 +106,27 @@ async def chat(request: Request):
     body = await request.json()
     mentor_key = body.get("mentor", "embedded")
     message = body.get("message", "")
-    session_id = body.get("session_id", "default")
-    file_ids = body.get("file_ids", [])
-
-    if session_id not in sessions:
-        sessions[session_id] = {"mentor": mentor_key, "messages": []}
-    session = sessions[session_id]
-
-    # Reset history if mentor changed
-    if session["mentor"] != mentor_key:
-        session["mentor"] = mentor_key
-        session["messages"] = []
 
     # Build system prompt
     mentor = MENTORS.get(mentor_key, MENTORS["embedded"])
     system_prompt = mentor["system_prompt"]
 
     # Attach file context — only files belonging to this mentor
-    mentor_files = {fid: f for fid, f in file_store.items() if f.get("mentor") == mentor_key}
-
-    files_to_include = []
-    if file_ids:
-        files_to_include = [(fid, mentor_files[fid]) for fid in file_ids if fid in mentor_files]
-    elif mentor_files:
-        files_to_include = list(mentor_files.items())
-
-    if files_to_include:
+    mentor_files = db.get_files(mentor_key)
+    if mentor_files:
         file_context = "\n\n--- REFERENCE FILES (uploaded by student) ---\n"
-        for fid, f in files_to_include:
-            # Truncate large files to stay within context window
-            content = f["content"][:6000]
-            truncated = " [truncated]" if len(f["content"]) > 6000 else ""
+        for f in mentor_files:
+            content = _load_file_content(f["id"], f["path"], f["name"])
+            content = content[:6000]
+            truncated = " [truncated]" if len(content) >= 6000 else ""
             file_context += f"\n### File: {f['name']}{truncated}\n```\n{content}\n```\n"
         system_prompt += file_context
 
-    session["messages"].append({"role": "user", "content": message})
+    # Save user message to DB
+    db.save_message(mentor_key, "user", message)
 
-    # Keep last 20 messages to avoid context overflow
-    recent = session["messages"][-20:]
+    # Build LLM context: system prompt + recent history (last 20 messages)
+    recent = db.get_recent_history(mentor_key, limit=20)
     messages = [{"role": "system", "content": system_prompt}] + recent
 
     async def generate():
@@ -146,7 +146,8 @@ async def chat(request: Request):
                                 response_text += token
                                 yield f"data: {json.dumps({'token': token})}\n\n"
 
-            session["messages"].append({"role": "assistant", "content": response_text})
+            # Save assistant response to DB
+            db.save_message(mentor_key, "assistant", response_text)
             yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -157,7 +158,7 @@ async def chat(request: Request):
 @app.post("/api/clear")
 async def clear_chat(request: Request):
     body = await request.json()
-    session_id = body.get("session_id", "default")
-    if session_id in sessions:
-        sessions[session_id]["messages"] = []
+    mentor = body.get("mentor", "")
+    if mentor:
+        db.clear_history(mentor)
     return {"ok": True}

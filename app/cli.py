@@ -5,6 +5,7 @@ import os
 import json
 import httpx
 from .mentors import MENTORS
+from . import db
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:7b")
@@ -52,9 +53,14 @@ def run_cli(mentor=None):
     print(f"  Model: {OLLAMA_MODEL}")
     print(f"{'═' * 60}")
     print(f"  Commands: /quit  /clear  /switch  /file <path>")
+
+    # Load persisted history
+    history = db.get_history(mentor, limit=200)
+    if history:
+        count = db.get_message_count(mentor)
+        print(f"  📜 Restored {count} messages from previous session")
     print(f"  Ask anything — I'll teach you step by step.\n")
 
-    history = []
     system_prompt = m["system_prompt"]
     loaded_files = {}
 
@@ -75,6 +81,7 @@ def run_cli(mentor=None):
                 print("\n  👋 See you next time!")
                 break
             elif cmd == "/clear":
+                db.clear_history(mentor)
                 history = []
                 print("  🗑️  Chat cleared!\n")
                 continue
@@ -82,8 +89,13 @@ def run_cli(mentor=None):
                 mentor = select_mentor()
                 m = MENTORS[mentor]
                 system_prompt = m["system_prompt"]
-                history = []
-                print(f"\n  Switched to {m['icon']}  {m['name']}\n")
+                history = db.get_history(mentor, limit=200)
+                loaded_files = {}
+                count = len(history)
+                print(f"\n  Switched to {m['icon']}  {m['name']}")
+                if count:
+                    print(f"  📜 Restored {count} messages")
+                print()
                 continue
             elif cmd == "/file":
                 path = user_input[5:].strip()
@@ -130,6 +142,7 @@ def run_cli(mentor=None):
                 full_system += f"\n### File: {name}\n```\n{content}\n```\n"
 
         history.append({"role": "user", "content": user_input})
+        db.save_message(mentor, "user", user_input)
         messages = [{"role": "system", "content": full_system}] + history[-20:]
 
         print(f"\n  {m['icon']}  ", end="", flush=True)
@@ -152,11 +165,16 @@ def run_cli(mentor=None):
 
             print("\n")
             history.append({"role": "assistant", "content": response_text})
+            db.save_message(mentor, "assistant", response_text)
 
         except httpx.ConnectError:
             print(f"\n  ❌ Cannot connect to Ollama at {OLLAMA_URL}")
             print(f"     Make sure Ollama is running: ollama serve\n")
             history.pop()
+            # Remove the saved user message since it failed
+            db.clear_history(mentor)
+            for msg in history:
+                db.save_message(mentor, msg["role"], msg["content"])
         except Exception as e:
             print(f"\n  ❌ Error: {e}\n")
             history.pop()
