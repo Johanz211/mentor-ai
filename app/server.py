@@ -5,7 +5,7 @@ import json
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 import httpx
@@ -23,7 +23,7 @@ UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 # In-memory state
-file_store = {}  # {id: {name, content, path, size}}
+file_store = {}  # {file_id: {name, content, path, size, mentor}}
 sessions = {}    # {session_id: {mentor, messages}}
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -43,12 +43,15 @@ async def list_mentors():
 
 
 @app.get("/api/files")
-async def list_files():
-    return [{"id": k, "name": v["name"], "size": v["size"]} for k, v in file_store.items()]
+async def list_files(mentor: str = ""):
+    files = file_store.values()
+    if mentor:
+        files = [f for f in files if f.get("mentor") == mentor]
+    return [{"id": f["id"], "name": f["name"], "size": f["size"], "mentor": f.get("mentor", "")} for f in files]
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), mentor: str = Form("")):
     file_id = str(uuid.uuid4())[:8]
     content_bytes = await file.read()
 
@@ -59,13 +62,15 @@ async def upload_file(file: UploadFile = File(...)):
     text_content = parse_file(file.filename, content_bytes)
 
     file_store[file_id] = {
+        "id": file_id,
         "name": file.filename,
         "content": text_content,
         "path": str(file_path),
         "size": len(content_bytes),
+        "mentor": mentor,
     }
 
-    return {"id": file_id, "name": file.filename, "size": len(content_bytes)}
+    return {"id": file_id, "name": file.filename, "size": len(content_bytes), "mentor": mentor}
 
 
 @app.delete("/api/files/{file_id}")
@@ -100,12 +105,14 @@ async def chat(request: Request):
     mentor = MENTORS.get(mentor_key, MENTORS["embedded"])
     system_prompt = mentor["system_prompt"]
 
-    # Attach file context
+    # Attach file context — only files belonging to this mentor
+    mentor_files = {fid: f for fid, f in file_store.items() if f.get("mentor") == mentor_key}
+
     files_to_include = []
     if file_ids:
-        files_to_include = [(fid, file_store[fid]) for fid in file_ids if fid in file_store]
-    elif file_store:
-        files_to_include = list(file_store.items())
+        files_to_include = [(fid, mentor_files[fid]) for fid in file_ids if fid in mentor_files]
+    elif mentor_files:
+        files_to_include = list(mentor_files.items())
 
     if files_to_include:
         file_context = "\n\n--- REFERENCE FILES (uploaded by student) ---\n"

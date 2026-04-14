@@ -2,23 +2,33 @@
    Mentor AI — Frontend Logic
    ═══════════════════════════════════════════ */
 
+function generateId() {
+    try { return crypto.randomUUID(); } catch (e) {}
+    return "s-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+}
+
 const state = {
     mentor: "embedded",
-    sessionId: crypto.randomUUID(),
+    sessionId: generateId(),
     streaming: false,
     files: [],
 };
 
-// Markdown renderer config
-marked.setOptions({
-    highlight: (code, lang) => {
-        if (lang && hljs.getLanguage(lang)) {
-            return hljs.highlight(code, { language: lang }).value;
-        }
-        return hljs.highlightAuto(code).value;
-    },
-    breaks: true,
-});
+// Markdown renderer config (safe init — CDN might be slow)
+try {
+    if (typeof marked !== "undefined") {
+        marked.setOptions({
+            highlight: (code, lang) => {
+                if (typeof hljs !== "undefined" && lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                if (typeof hljs !== "undefined") return hljs.highlightAuto(code).value;
+                return code;
+            },
+            breaks: true,
+        });
+    }
+} catch (e) { console.warn("marked init deferred:", e); }
 
 // Quick-start questions per mentor
 const QUICK_STARTS = {
@@ -49,6 +59,13 @@ const QUICK_STARTS = {
         "How do gears transmit power?",
         "Bernoulli's equation explained",
         "What is GD&T?",
+    ],
+    vcs: [
+        "Explain git rebase vs merge",
+        "What is a detached HEAD?",
+        "How does Git store data internally?",
+        "Best branching strategy for small teams?",
+        "How to undo a bad commit?",
     ],
 };
 
@@ -95,6 +112,7 @@ async function loadMentors() {
 }
 
 function selectMentor(key, m) {
+    const previous = state.mentor;
     state.mentor = key;
 
     document.querySelectorAll(".mentor-card").forEach(c => c.classList.remove("active"));
@@ -103,11 +121,19 @@ function selectMentor(key, m) {
     document.getElementById("current-mentor-icon").textContent = m.icon;
     document.getElementById("current-mentor-name").textContent = m.name;
 
+    // Reload files for this mentor
+    loadFiles();
+
     // Show welcome with new quick starts if chat is empty
-    const messages = document.getElementById("messages");
     const welcome = document.getElementById("welcome");
     if (welcome) {
         renderQuickStarts(key);
+    } else if (previous !== key) {
+        // Mentor switched mid-conversation — clear and show system message
+        clearChat();
+        const welcome2 = document.getElementById("welcome");
+        if (welcome2) welcome2.remove();
+        addSystemMessage(`Switched to ${m.icon} ${m.name}`);
     }
 }
 
@@ -131,7 +157,7 @@ function sendQuickStart(text) {
 
 async function loadFiles() {
     try {
-        const resp = await fetch("/api/files");
+        const resp = await fetch(`/api/files?mentor=${state.mentor}`);
         state.files = await resp.json();
         renderFiles();
     } catch (e) {
@@ -163,6 +189,7 @@ function formatSize(bytes) {
 async function uploadFile(file) {
     const form = new FormData();
     form.append("file", file);
+    form.append("mentor", state.mentor);
     try {
         const resp = await fetch("/api/upload", { method: "POST", body: form });
         const data = await resp.json();
@@ -183,23 +210,40 @@ async function deleteFile(id) {
     }
 }
 
-// Drag & drop
-const dropZone = document.getElementById("drop-zone");
-const fileInput = document.getElementById("file-input");
+// ── Drag & drop (deferred to DOMContentLoaded) ──
 
-dropZone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    dropZone.classList.add("dragover");
-});
-dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
-dropZone.addEventListener("drop", (e) => {
-    e.preventDefault();
-    dropZone.classList.remove("dragover");
-    for (const file of e.dataTransfer.files) uploadFile(file);
-});
-fileInput.addEventListener("change", () => {
-    for (const file of fileInput.files) uploadFile(file);
-    fileInput.value = "";
+document.addEventListener("DOMContentLoaded", () => {
+    const dropZone = document.getElementById("drop-zone");
+    const fileInput = document.getElementById("file-input");
+
+    dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("dragover");
+    });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+    dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("dragover");
+        for (const file of e.dataTransfer.files) uploadFile(file);
+    });
+    fileInput.addEventListener("change", () => {
+        for (const file of fileInput.files) uploadFile(file);
+        fileInput.value = "";
+    });
+
+    const textarea = document.getElementById("message-input");
+    textarea.addEventListener("input", () => {
+        textarea.style.height = "auto";
+        textarea.style.height = Math.min(textarea.scrollHeight, 150) + "px";
+    });
+    textarea.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    init();
 });
 
 
@@ -296,6 +340,15 @@ function addMessage(role, text) {
     return div;
 }
 
+function addSystemMessage(text) {
+    const messages = document.getElementById("messages");
+    const div = document.createElement("div");
+    div.className = "message system";
+    div.innerHTML = `<div class="message-content system-content">${escapeHtml(text)}</div>`;
+    messages.appendChild(div);
+    scrollToBottom();
+}
+
 function scrollToBottom() {
     const el = document.getElementById("messages");
     el.scrollTop = el.scrollHeight;
@@ -329,29 +382,8 @@ async function clearChat() {
 }
 
 
-// ── Textarea auto-resize + Enter to send ──
-
-const textarea = document.getElementById("message-input");
-
-textarea.addEventListener("input", () => {
-    textarea.style.height = "auto";
-    textarea.style.height = Math.min(textarea.scrollHeight, 150) + "px";
-});
-
-textarea.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
-
-
 // ── Sidebar toggle (mobile) ──
 
 function toggleSidebar() {
     document.getElementById("sidebar").classList.toggle("open");
 }
-
-
-// ── Start ──
-init();

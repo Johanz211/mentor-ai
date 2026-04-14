@@ -424,6 +424,21 @@ body {
     background: var(--bg-tertiary);
 }
 
+/* ── System message ── */
+.message.system {
+    align-self: center;
+    max-width: 100%;
+}
+
+.system-content {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 8px 16px !important;
+}
+
 /* ── Typing indicator ── */
 .typing-indicator {
     display: flex;
