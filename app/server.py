@@ -162,3 +162,98 @@ async def clear_chat(request: Request):
     if mentor:
         db.clear_history(mentor)
     return {"ok": True}
+
+
+# ── Flashcards ──
+
+@app.get("/api/flashcards/{mentor}")
+async def list_flashcards(mentor: str):
+    cards = db.get_flashcards(mentor)
+    stats = db.get_flashcard_stats(mentor)
+    return {"cards": cards, "stats": stats}
+
+
+@app.get("/api/flashcards/{mentor}/due")
+async def due_flashcards(mentor: str):
+    cards = db.get_due_flashcards(mentor)
+    stats = db.get_flashcard_stats(mentor)
+    return {"cards": cards, "stats": stats}
+
+
+@app.post("/api/flashcards")
+async def create_flashcard(request: Request):
+    body = await request.json()
+    card_id = db.add_flashcard(body["mentor"], body["question"], body["answer"])
+    return {"id": card_id, "ok": True}
+
+
+@app.post("/api/flashcards/{card_id}/review")
+async def review_flashcard(card_id: int, request: Request):
+    body = await request.json()
+    quality = body.get("quality", 2)  # 0=again, 1=hard, 2=good, 3=easy
+    db.review_flashcard(card_id, quality)
+    return {"ok": True}
+
+
+@app.delete("/api/flashcards/{card_id}")
+async def delete_flashcard(card_id: int):
+    db.delete_flashcard(card_id)
+    return {"ok": True}
+
+
+@app.post("/api/flashcards/{mentor}/generate")
+async def generate_flashcards(mentor: str):
+    """Use LLM to extract flashcards from recent chat history."""
+    history = db.get_recent_history(mentor, limit=40)
+    if not history:
+        return {"cards": [], "message": "No chat history to generate from"}
+
+    # Build conversation text for LLM
+    conv_text = ""
+    for msg in history:
+        role = "Student" if msg["role"] == "user" else "Mentor"
+        conv_text += f"{role}: {msg['content']}\n\n"
+
+    prompt = f"""Analyze this conversation and extract 3-5 flashcards for studying.
+Each flashcard should test ONE specific concept discussed.
+
+Rules:
+- Question should be specific and testable (not vague)
+- Answer should be concise (1-3 sentences max)
+- Focus on facts, definitions, code patterns, and key concepts
+- Output ONLY valid JSON array, no other text
+
+Format:
+[{{"q": "What does 0xFF represent in binary?", "a": "0xFF = 0b11111111 (all 8 bits set to 1), decimal 255"}}]
+
+Conversation:
+{conv_text[:4000]}
+
+JSON output:"""
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+            )
+            raw = resp.json().get("response", "")
+
+            # Parse JSON from response (handle markdown code blocks)
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                raw = raw.rsplit("```", 1)[0]
+            raw = raw.strip()
+
+            cards = json.loads(raw)
+            created = []
+            for card in cards:
+                if "q" in card and "a" in card:
+                    cid = db.add_flashcard(mentor, card["q"], card["a"])
+                    created.append({"id": cid, "question": card["q"], "answer": card["a"]})
+
+            return {"cards": created, "count": len(created)}
+
+    except Exception as e:
+        return JSONResponse({"error": f"Generation failed: {str(e)}"}, status_code=500)

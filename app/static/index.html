@@ -51,6 +51,64 @@
             <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
             <span id="current-mentor-icon">🔌</span>
             <span id="current-mentor-name">Embedded Systems & EE</span>
+            <div class="header-actions">
+                <button class="header-btn" id="flashcard-toggle" onclick="toggleFlashcards()" title="Flashcards">
+                    🃏 <span class="fc-badge" id="fc-badge"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Flashcard Panel -->
+        <div class="flashcard-panel" id="flashcard-panel" style="display:none">
+            <div class="fc-toolbar">
+                <div class="fc-stats">
+                    <span id="fc-stat-total">0 cards</span>
+                    <span class="fc-stat-sep">·</span>
+                    <span id="fc-stat-due" class="fc-due">0 due</span>
+                    <span class="fc-stat-sep">·</span>
+                    <span id="fc-stat-mastered">0 mastered</span>
+                </div>
+                <div class="fc-actions">
+                    <button class="fc-btn" onclick="generateFlashcards()" id="fc-generate-btn">⚡ Generate from Chat</button>
+                    <button class="fc-btn" onclick="showAddCard()">+ Add Card</button>
+                    <button class="fc-btn fc-btn-secondary" onclick="toggleFlashcardList()">📋 All Cards</button>
+                </div>
+            </div>
+
+            <!-- Add card form (hidden by default) -->
+            <div class="fc-add-form" id="fc-add-form" style="display:none">
+                <input type="text" id="fc-new-q" placeholder="Question (front)" class="fc-input">
+                <input type="text" id="fc-new-a" placeholder="Answer (back)" class="fc-input">
+                <div class="fc-add-actions">
+                    <button class="fc-btn" onclick="addCard()">Save</button>
+                    <button class="fc-btn fc-btn-secondary" onclick="hideAddCard()">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Review area -->
+            <div class="fc-review" id="fc-review">
+                <div class="fc-card" id="fc-card" onclick="flipCard()">
+                    <div class="fc-card-inner" id="fc-card-inner">
+                        <div class="fc-card-front" id="fc-card-front">
+                            <p class="fc-empty">No cards due! 🎉<br><small>Generate some from your chat history</small></p>
+                        </div>
+                        <div class="fc-card-back" id="fc-card-back">
+                            <p></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="fc-review-btns" id="fc-review-btns" style="display:none">
+                    <button class="fc-grade fc-again" onclick="gradeCard(0)">🔁 Again</button>
+                    <button class="fc-grade fc-hard" onclick="gradeCard(1)">😓 Hard</button>
+                    <button class="fc-grade fc-good" onclick="gradeCard(2)">👍 Good</button>
+                    <button class="fc-grade fc-easy" onclick="gradeCard(3)">🚀 Easy</button>
+                </div>
+                <p class="fc-hint" id="fc-hint">Click card to flip</p>
+            </div>
+
+            <!-- All cards list (hidden by default) -->
+            <div class="fc-list" id="fc-list" style="display:none">
+            </div>
         </div>
 
         <div class="chat-messages" id="messages">

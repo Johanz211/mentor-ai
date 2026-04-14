@@ -38,6 +38,22 @@ def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_chat_mentor ON chat_messages(mentor);
         CREATE INDEX IF NOT EXISTS idx_files_mentor ON uploaded_files(mentor);
+
+        CREATE TABLE IF NOT EXISTS flashcards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mentor TEXT NOT NULL,
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            difficulty TEXT DEFAULT 'new',
+            ease_factor REAL DEFAULT 2.5,
+            interval INTEGER DEFAULT 0,
+            repetitions INTEGER DEFAULT 0,
+            next_review TEXT DEFAULT (datetime('now')),
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_fc_mentor ON flashcards(mentor);
+        CREATE INDEX IF NOT EXISTS idx_fc_review ON flashcards(next_review);
     """)
     conn.commit()
     conn.close()
@@ -127,6 +143,114 @@ def delete_file_meta(file_id: str):
     conn.execute("DELETE FROM uploaded_files WHERE id = ?", (file_id,))
     conn.commit()
     conn.close()
+
+
+# ── Flashcards ──
+
+def add_flashcard(mentor: str, question: str, answer: str) -> int:
+    conn = _connect()
+    cur = conn.execute(
+        "INSERT INTO flashcards (mentor, question, answer) VALUES (?, ?, ?)",
+        (mentor, question, answer),
+    )
+    card_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return card_id
+
+
+def get_flashcards(mentor: str) -> list[dict]:
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, question, answer, difficulty, ease_factor, interval, repetitions, next_review, created_at "
+        "FROM flashcards WHERE mentor = ? ORDER BY created_at DESC",
+        (mentor,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_due_flashcards(mentor: str, limit: int = 20) -> list[dict]:
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT id, question, answer, difficulty, ease_factor, interval, repetitions "
+        "FROM flashcards WHERE mentor = ? AND next_review <= datetime('now') "
+        "ORDER BY next_review ASC LIMIT ?",
+        (mentor, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def review_flashcard(card_id: int, quality: int):
+    """SM-2 spaced repetition. quality: 0=again, 1=hard, 2=good, 3=easy."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT ease_factor, interval, repetitions FROM flashcards WHERE id = ?",
+        (card_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return
+
+    ef = row["ease_factor"]
+    interval = row["interval"]
+    reps = row["repetitions"]
+
+    if quality < 1:  # again
+        reps = 0
+        interval = 0
+        difficulty = "again"
+    else:
+        if reps == 0:
+            interval = 1
+        elif reps == 1:
+            interval = 6
+        else:
+            interval = round(interval * ef)
+
+        ef = ef + (0.1 - (3 - quality) * (0.08 + (3 - quality) * 0.02))
+        ef = max(1.3, ef)
+        reps += 1
+
+        if quality == 1:
+            difficulty = "hard"
+        elif quality == 2:
+            difficulty = "good"
+        else:
+            difficulty = "easy"
+
+    conn.execute(
+        "UPDATE flashcards SET ease_factor=?, interval=?, repetitions=?, difficulty=?, "
+        "next_review=datetime('now', '+' || ? || ' days') WHERE id=?",
+        (ef, interval, reps, difficulty, interval, card_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_flashcard(card_id: int):
+    conn = _connect()
+    conn.execute("DELETE FROM flashcards WHERE id = ?", (card_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_flashcard_stats(mentor: str) -> dict:
+    conn = _connect()
+    total = conn.execute(
+        "SELECT COUNT(*) as cnt FROM flashcards WHERE mentor = ?", (mentor,)
+    ).fetchone()["cnt"]
+    due = conn.execute(
+        "SELECT COUNT(*) as cnt FROM flashcards WHERE mentor = ? AND next_review <= datetime('now')",
+        (mentor,),
+    ).fetchone()["cnt"]
+    mastered = conn.execute(
+        "SELECT COUNT(*) as cnt FROM flashcards WHERE mentor = ? AND repetitions >= 5",
+        (mentor,),
+    ).fetchone()["cnt"]
+    conn.close()
+    return {"total": total, "due": due, "mastered": mastered}
 
 
 # Initialize on import

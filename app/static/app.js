@@ -70,6 +70,7 @@ async function init() {
     await loadMentors();
     await loadFiles();
     await loadHistory(state.mentor);
+    await loadFcBadge();
 }
 
 async function loadMentors() {
@@ -122,6 +123,9 @@ function selectMentor(key, m) {
     // Load persisted history for this mentor
     if (previous !== key) {
         loadHistory(key);
+        loadFcBadge();
+        // Close flashcard panel if open
+        if (fcState.panelOpen) toggleFlashcards();
     }
 }
 
@@ -403,4 +407,230 @@ async function clearChat() {
 
 function toggleSidebar() {
     document.getElementById("sidebar").classList.toggle("open");
+}
+
+
+// ═══════════════════════════════════════════
+// Flashcard System
+// ═══════════════════════════════════════════
+
+const fcState = {
+    cards: [],
+    currentIndex: 0,
+    flipped: false,
+    panelOpen: false,
+};
+
+function toggleFlashcards() {
+    fcState.panelOpen = !fcState.panelOpen;
+    const panel = document.getElementById("flashcard-panel");
+    const messages = document.getElementById("messages");
+    const inputArea = document.querySelector(".chat-input-area");
+    const btn = document.getElementById("flashcard-toggle");
+
+    if (fcState.panelOpen) {
+        panel.style.display = "flex";
+        messages.style.display = "none";
+        inputArea.style.display = "none";
+        btn.classList.add("active");
+        loadDueCards();
+    } else {
+        panel.style.display = "none";
+        messages.style.display = "";
+        inputArea.style.display = "";
+        btn.classList.remove("active");
+    }
+}
+
+async function loadDueCards() {
+    try {
+        const resp = await fetch(`/api/flashcards/${state.mentor}/due`);
+        const data = await resp.json();
+        fcState.cards = data.cards;
+        fcState.currentIndex = 0;
+        fcState.flipped = false;
+        updateFcStats(data.stats);
+        showCurrentCard();
+    } catch (e) {
+        console.error("Failed to load flashcards:", e);
+    }
+}
+
+function updateFcStats(stats) {
+    document.getElementById("fc-stat-total").textContent = `${stats.total} cards`;
+    document.getElementById("fc-stat-due").textContent = `${stats.due} due`;
+    document.getElementById("fc-stat-mastered").textContent = `${stats.mastered} mastered`;
+
+    const badge = document.getElementById("fc-badge");
+    if (stats.due > 0) {
+        badge.textContent = stats.due;
+        badge.classList.add("visible");
+    } else {
+        badge.classList.remove("visible");
+    }
+}
+
+function showCurrentCard() {
+    const front = document.getElementById("fc-card-front");
+    const back = document.getElementById("fc-card-back");
+    const inner = document.getElementById("fc-card-inner");
+    const btns = document.getElementById("fc-review-btns");
+    const hint = document.getElementById("fc-hint");
+
+    inner.classList.remove("flipped");
+    fcState.flipped = false;
+    btns.style.display = "none";
+    hint.textContent = "Click card to flip";
+
+    if (fcState.currentIndex >= fcState.cards.length) {
+        front.innerHTML = '<p class="fc-empty">No more cards due! 🎉<br><small>Come back later or generate new ones</small></p>';
+        back.innerHTML = "";
+        hint.textContent = "";
+        return;
+    }
+
+    const card = fcState.cards[fcState.currentIndex];
+    front.innerHTML = `<p>${escapeHtml(card.question)}</p>`;
+    back.innerHTML = `<p>${typeof marked !== "undefined" ? marked.parse(card.answer) : escapeHtml(card.answer)}</p>`;
+}
+
+function flipCard() {
+    if (fcState.currentIndex >= fcState.cards.length) return;
+
+    const inner = document.getElementById("fc-card-inner");
+    const btns = document.getElementById("fc-review-btns");
+    const hint = document.getElementById("fc-hint");
+
+    if (!fcState.flipped) {
+        inner.classList.add("flipped");
+        fcState.flipped = true;
+        btns.style.display = "flex";
+        hint.textContent = "How well did you know this?";
+    } else {
+        inner.classList.remove("flipped");
+        fcState.flipped = false;
+        btns.style.display = "none";
+        hint.textContent = "Click card to flip";
+    }
+}
+
+async function gradeCard(quality) {
+    const card = fcState.cards[fcState.currentIndex];
+    try {
+        await fetch(`/api/flashcards/${card.id}/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ quality }),
+        });
+    } catch (e) { console.error("Review failed:", e); }
+
+    fcState.currentIndex++;
+    showCurrentCard();
+
+    // Refresh stats
+    try {
+        const resp = await fetch(`/api/flashcards/${state.mentor}/due`);
+        const data = await resp.json();
+        updateFcStats(data.stats);
+    } catch (e) { /* ok */ }
+}
+
+async function generateFlashcards() {
+    const btn = document.getElementById("fc-generate-btn");
+    btn.disabled = true;
+    btn.textContent = "⏳ Generating...";
+
+    try {
+        const resp = await fetch(`/api/flashcards/${state.mentor}/generate`, { method: "POST" });
+        const data = await resp.json();
+
+        if (data.error) {
+            alert("Generation failed: " + data.error);
+        } else if (data.count > 0) {
+            await loadDueCards();
+        } else {
+            alert("No flashcards generated. Chat with your mentor first!");
+        }
+    } catch (e) {
+        alert("Failed to generate: " + e.message);
+    }
+
+    btn.disabled = false;
+    btn.textContent = "⚡ Generate from Chat";
+}
+
+function showAddCard() {
+    document.getElementById("fc-add-form").style.display = "flex";
+    document.getElementById("fc-new-q").focus();
+}
+
+function hideAddCard() {
+    document.getElementById("fc-add-form").style.display = "none";
+    document.getElementById("fc-new-q").value = "";
+    document.getElementById("fc-new-a").value = "";
+}
+
+async function addCard() {
+    const q = document.getElementById("fc-new-q").value.trim();
+    const a = document.getElementById("fc-new-a").value.trim();
+    if (!q || !a) return;
+
+    try {
+        await fetch("/api/flashcards", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mentor: state.mentor, question: q, answer: a }),
+        });
+        hideAddCard();
+        await loadDueCards();
+    } catch (e) {
+        alert("Failed to add card: " + e.message);
+    }
+}
+
+async function toggleFlashcardList() {
+    const list = document.getElementById("fc-list");
+    const review = document.getElementById("fc-review");
+
+    if (list.style.display === "none") {
+        try {
+            const resp = await fetch(`/api/flashcards/${state.mentor}`);
+            const data = await resp.json();
+
+            if (data.cards.length === 0) {
+                list.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:20px">No cards yet</p>';
+            } else {
+                list.innerHTML = data.cards.map(c => `
+                    <div class="fc-list-item">
+                        <span class="fc-list-q">${escapeHtml(c.question)}</span>
+                        <span class="fc-list-diff ${c.difficulty}">${c.difficulty}</span>
+                        <button class="fc-list-del" onclick="deleteCard(${c.id})" title="Delete">✕</button>
+                    </div>
+                `).join("");
+            }
+        } catch (e) { console.error(e); }
+
+        list.style.display = "block";
+        review.style.display = "none";
+    } else {
+        list.style.display = "none";
+        review.style.display = "flex";
+    }
+}
+
+async function deleteCard(id) {
+    try {
+        await fetch(`/api/flashcards/${id}`, { method: "DELETE" });
+        await toggleFlashcardList(); // refresh list
+        await toggleFlashcardList();
+    } catch (e) { console.error(e); }
+}
+
+// Load badge count on init
+async function loadFcBadge() {
+    try {
+        const resp = await fetch(`/api/flashcards/${state.mentor}/due`);
+        const data = await resp.json();
+        updateFcStats(data.stats);
+    } catch (e) { /* ok */ }
 }
