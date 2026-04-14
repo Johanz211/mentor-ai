@@ -795,3 +795,16 @@ textarea::placeholder {
     font-size: 0.75rem;
 }
 .fc-list-del:hover { color: var(--red); background: rgba(248,81,73,0.1); }
+
+/* Model badge on mentor cards */
+.model-badge {
+    display: inline-block;
+    font-size: 0.6rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: rgba(88,166,255,0.15);
+    color: var(--accent);
+    vertical-align: middle;
+    margin-left: 4px;
+    font-weight: 500;
+}

@@ -61,6 +61,13 @@ const QUICK_STARTS = {
         "Best branching strategy for small teams?",
         "How to undo a bad commit?",
     ],
+    companion: [
+        "How's your day going?",
+        "I need some advice about something",
+        "Tell me something interesting",
+        "I'm feeling a bit stressed today",
+        "What's a good way to stay motivated?",
+    ],
 };
 
 
@@ -84,10 +91,11 @@ async function loadMentors() {
             const card = document.createElement("div");
             card.className = `mentor-card${key === state.mentor ? " active" : ""}`;
             card.dataset.key = key;
+            const modelBadge = m.model ? `<span class="model-badge" title="Uses ${m.model}">⚡ ${m.model.split(':').pop()}</span>` : '';
             card.innerHTML = `
                 <div class="icon">${m.icon}</div>
                 <div class="info">
-                    <div class="name">${m.name}</div>
+                    <div class="name">${m.name} ${modelBadge}</div>
                     <div class="desc">${m.description}</div>
                 </div>
             `;

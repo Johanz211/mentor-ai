@@ -72,10 +72,13 @@ async def root():
 
 @app.get("/api/mentors")
 async def list_mentors():
-    return {
-        k: {"name": v["name"], "icon": v["icon"], "description": v["description"]}
-        for k, v in MENTORS.items()
-    }
+    result = {}
+    for k, v in MENTORS.items():
+        info = {"name": v["name"], "icon": v["icon"], "description": v["description"]}
+        if "model" in v:
+            info["model"] = v["model"]
+        result[k] = info
+    return result
 
 
 @app.get("/api/files")
@@ -151,6 +154,9 @@ async def chat(request: Request):
     recent = db.get_recent_history(mentor_key, limit=20)
     messages = [{"role": "system", "content": system_prompt}] + recent
 
+    # Use per-mentor model if specified, otherwise default
+    chat_model = mentor.get("model", OLLAMA_MODEL)
+
     async def generate():
         response_text = ""
         try:
@@ -158,7 +164,7 @@ async def chat(request: Request):
                 async with client.stream(
                     "POST",
                     f"{OLLAMA_URL}/api/chat",
-                    json={"model": OLLAMA_MODEL, "messages": messages, "stream": True},
+                    json={"model": chat_model, "messages": messages, "stream": True},
                 ) as resp:
                     async for line in resp.aiter_lines():
                         if line:
@@ -253,11 +259,14 @@ Conversation:
 
 JSON output:"""
 
+    mentor_def = MENTORS.get(mentor, {})
+    fc_model = mentor_def.get("model", OLLAMA_MODEL)
+
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{OLLAMA_URL}/api/generate",
-                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                json={"model": fc_model, "prompt": prompt, "stream": False},
             )
             raw = resp.json().get("response", "")
 
