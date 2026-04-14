@@ -37,7 +37,7 @@ mentor cli -m embedded
 - Python 3.10+
 - [Ollama](https://ollama.ai) running locally with a model pulled:
   ```bash
-  ollama pull qwen2.5-coder:7b
+  ollama pull qwen2.5-coder:14b
   ```
 
 ## Usage

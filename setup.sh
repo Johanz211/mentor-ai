@@ -96,7 +96,7 @@ if curl -sf --max-time 3 "http://localhost:11434/api/tags" > /dev/null 2>&1; the
     if curl -sf --max-time 3 "http://localhost:11434/api/tags" | grep -q "qwen2.5-coder"; then
         info "Model qwen2.5-coder found"
     else
-        warn "Model qwen2.5-coder:7b not found — run: ollama pull qwen2.5-coder:7b"
+        warn "Model qwen2.5-coder:14b not found — run: ollama pull qwen2.5-coder:14b"
     fi
 else
     warn "Ollama not running — start it with: ollama serve"

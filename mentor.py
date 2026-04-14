@@ -50,7 +50,7 @@ Examples:
     else:
         import uvicorn
 
-        model = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:7b")
+        model = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
         print()
         print("  ┌─────────────────────────────────────────────┐")
         print("  │           🎓  Mentor AI                     │")

@@ -29,7 +29,7 @@ mentor-ai/
 
 | Layer     | Tech                                       |
 |-----------|--------------------------------------------|
-| LLM       | Ollama (local) with `qwen2.5-coder:7b`    |
+| LLM       | Ollama (local) with `qwen2.5-coder:14b`   |
 | Backend   | FastAPI + uvicorn (port 8888, 0.0.0.0)     |
 | Frontend  | Vanilla HTML/CSS/JS (no build step)        |
 | CLI       | Rich + httpx (streaming)                   |
@@ -123,7 +123,7 @@ No restart needed for the backend (dict is read at import time, so restart the s
 
 - **Port**: 8888 (change in `mentor.py`)
 - **Ollama URL**: `http://localhost:11434` (change in `server.py` and `cli.py`)
-- **Model**: `qwen2.5-coder:7b` (change in `server.py` and `cli.py`)
+- **Model**: `qwen2.5-coder:14b` (change in `server.py` and `cli.py`)
 - **DB path**: `data/mentor.db` (change in `db.py`)
 - **Context limit**: 20 messages (change in `server.py` line ~129 and `cli.py`)
 
@@ -163,7 +163,7 @@ python mentor.py --mode cli
 
 ## Known Limitations
 
-- **Context window**: qwen2.5-coder:7b has ~32K tokens. Very large files or long conversations may hit limits.
+- **Context window**: qwen2.5-coder:14b has ~32K tokens. Very large files or long conversations may hit limits.
 - **No RAG**: File content is injected wholesale into system prompt. For large codebases, chunking + vector search would be better.
 - **No auth**: Anyone on the network can access the UI. Add a reverse proxy with auth for production.
 - **Single model**: All mentors use the same LLM. Could add per-mentor model config for specialized models.
