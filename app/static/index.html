@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mentor AI</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/armasm.min.js"></script>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h1>🎓 Mentor AI</h1>
+            <p class="subtitle">Your learning companion</p>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Mentors</h3>
+            <div id="mentor-list" class="mentor-list"></div>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Files <span class="file-count" id="file-count"></span></h3>
+            <div class="file-upload-area" id="drop-zone">
+                <input type="file" id="file-input" multiple hidden>
+                <p>📁 Drop files here or <a href="#" onclick="document.getElementById('file-input').click(); return false;">browse</a></p>
+                <p class="small">C, Python, PDF, docs, any code</p>
+            </div>
+            <div id="file-list" class="file-list"></div>
+        </div>
+
+        <div class="sidebar-footer">
+            <button class="btn-clear" onclick="clearChat()">🗑️ Clear Chat</button>
+            <p class="small">Powered by Ollama (local)</p>
+        </div>
+    </aside>
+
+    <!-- Main chat area -->
+    <main class="chat-main">
+        <div class="chat-header" id="chat-header">
+            <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+            <span id="current-mentor-icon">🔌</span>
+            <span id="current-mentor-name">Embedded Systems & EE</span>
+        </div>
+
+        <div class="chat-messages" id="messages">
+            <div class="welcome-message" id="welcome">
+                <div class="welcome-icon">🎓</div>
+                <h2>Welcome to Mentor AI</h2>
+                <p>Pick a mentor from the sidebar and ask anything.<br>Upload code files for context-aware help.</p>
+                <div class="quick-starts" id="quick-starts"></div>
+            </div>
+        </div>
+
+        <div class="chat-input-area">
+            <div class="input-wrapper">
+                <textarea
+                    id="message-input"
+                    placeholder="Ask your mentor anything..."
+                    rows="1"
+                    autofocus
+                ></textarea>
+                <button class="send-btn" id="send-btn" onclick="sendMessage()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
