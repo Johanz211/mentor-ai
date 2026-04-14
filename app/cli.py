@@ -8,7 +8,27 @@ from .mentors import MENTORS
 from . import db
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
+OLLAMA_MODEL_PREFERRED = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
+OLLAMA_MODEL_FALLBACK = "qwen2.5-coder:7b"
+
+
+def _detect_model() -> str:
+    """Use preferred model if available, otherwise fall back."""
+    try:
+        resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        names = [m["name"] for m in resp.json().get("models", [])]
+        for n in names:
+            if OLLAMA_MODEL_PREFERRED in n:
+                return OLLAMA_MODEL_PREFERRED
+        for n in names:
+            if OLLAMA_MODEL_FALLBACK in n:
+                return OLLAMA_MODEL_FALLBACK
+    except Exception:
+        pass
+    return OLLAMA_MODEL_PREFERRED
+
+
+OLLAMA_MODEL = _detect_model()
 
 
 def select_mentor():

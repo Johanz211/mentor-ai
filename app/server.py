@@ -17,7 +17,29 @@ from . import db
 app = FastAPI(title="Mentor AI")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
+OLLAMA_MODEL_PREFERRED = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:14b")
+OLLAMA_MODEL_FALLBACK = "qwen2.5-coder:7b"
+
+
+def _detect_model() -> str:
+    """Use preferred model if available, otherwise fall back."""
+    try:
+        resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        names = [m["name"] for m in resp.json().get("models", [])]
+        if OLLAMA_MODEL_PREFERRED in names or OLLAMA_MODEL_PREFERRED.split(":")[0] in [n.split(":")[0] for n in names if OLLAMA_MODEL_PREFERRED in n]:
+            return OLLAMA_MODEL_PREFERRED
+        # Check without tag (ollama may list as "qwen2.5-coder:14b" or just match prefix)
+        for n in names:
+            if n.startswith(OLLAMA_MODEL_PREFERRED.split(":")[0]) and OLLAMA_MODEL_PREFERRED.split(":")[1] in n:
+                return n
+        if OLLAMA_MODEL_FALLBACK in names or any(OLLAMA_MODEL_FALLBACK in n for n in names):
+            return OLLAMA_MODEL_FALLBACK
+    except Exception:
+        pass
+    return OLLAMA_MODEL_PREFERRED  # hope for the best
+
+
+OLLAMA_MODEL = _detect_model()
 
 STATIC_DIR = Path(__file__).parent / "static"
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"

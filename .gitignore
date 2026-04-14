@@ -9,3 +9,4 @@ data/*
 *.log
 mentor.pid
 logs/
+mentor.pid
