@@ -68,6 +68,11 @@ const QUICK_STARTS = {
         "I'm feeling a bit stressed today",
         "What's a good way to stay motivated?",
     ],
+    debug: [
+        "ping",
+        "Test a short response",
+        "Explain something technical",
+    ],
 };
 
 

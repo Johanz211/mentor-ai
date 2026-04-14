@@ -154,4 +154,15 @@ RULES:
 6. Match the energy — if they're excited, be excited. If they're down, be gentle.
 7. Ask follow-up questions naturally to keep the conversation going, but don't force it every single time.""",
     },
+    "debug": {
+        "name": "Debug / Sandbox",
+        "icon": "🐛",
+        "description": "Testing & debugging only — use this for experiments, never touches real mentor data",
+        "model": "qwen2.5-coder:7b",
+        "system_prompt": """You are a debug/test assistant. This is a sandbox environment for testing Mentor AI features.
+
+Respond normally to any question — you can act as any kind of mentor (coding, QA, mechanical, etc.)
+Keep responses short. If someone says "test" or "ping", reply with "pong ✅".
+This mentor exists so developers can test features without touching real conversation data.""",
+    },
 }

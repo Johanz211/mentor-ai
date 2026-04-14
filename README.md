@@ -9,14 +9,22 @@ Your personal learning companion powered by a local LLM (Ollama). Chat with doma
 - 💻 **LeetCode & DSA** — Algorithms, patterns, Big O, interview prep
 - ⚙️ **Mechanical Engineering** — Thermodynamics, materials, FEA, CAD, GD&T
 - 🔀 **Version Control & Git** — Git, GitHub, branching strategies, CI/CD
+- 💬 **Personal Companion** — Chat, advice, consolation, general knowledge *(uses 7B model for speed)*
+- 🐛 **Debug / Sandbox** — For testing & experiments only *(uses 7B model)*
+
+> ⚠️ **IMPORTANT:** Always use the **🐛 Debug** mentor for testing and experiments.
+> Never run test/debug operations against real mentors — chat history **cannot be recovered** once cleared.
 
 ## Features
 
 - **Web UI** — Chat interface with mentor selection, file uploads, markdown + code highlighting
 - **CLI mode** — Interactive terminal chat with streaming responses
 - **Chat persistence** — Conversations saved to SQLite, restored on reload (shared between web & CLI)
-- **File context** — Upload code/docs/PDFs per mentor; injected into LLM context
+- **RAG Retrieval** — Uploaded files are chunked and indexed with FTS5/BM25; only relevant sections are injected into context (handles 800+ page PDFs efficiently)
+- **Query Expansion** — User questions are analysed to extract key terms and expand with synonyms before searching file chunks
+- **Per-mentor models** — Mentors can specify their own model (e.g. companion uses 7B for speed, others use 14B)
 - **🃏 Flashcards** — Generate cards from chat history, manual creation, SM-2 spaced repetition
+- **Auto Flashcards** — Background cron generates flashcards every 4 hours from new chat history (configurable via `AUTO_FC_HOURS`)
 - **Streaming** — Real-time token-by-token responses
 - **Health check** — Auto-restart via cron if server goes down
 - **Customizable** — Add new mentors by editing `app/mentors.py`
@@ -99,6 +107,7 @@ Edit `app/mentors.py` and add an entry to the `MENTORS` dict:
     "name": "Display Name",
     "icon": "🎯",
     "description": "Short description for sidebar",
+    "model": "qwen2.5-coder:7b",      # optional — override default model
     "system_prompt": "Detailed instructions for the LLM...",
 }
 ```
@@ -113,10 +122,11 @@ mentor-ai/
 ├── setup.sh            # One-command setup (venv, aliases, cron)
 ├── healthcheck.sh      # Auto-restart script
 ├── app/
-│   ├── server.py       # FastAPI backend (chat, files, flashcards, SSE)
+│   ├── server.py       # FastAPI backend (chat, files, flashcards, auto-cron, SSE)
 │   ├── cli.py          # Terminal chat mode
-│   ├── db.py           # SQLite persistence (chat, files, flashcards)
-│   ├── mentors.py      # Mentor persona definitions
+│   ├── db.py           # SQLite persistence (chat, files, flashcards, FTS5 chunks)
+│   ├── mentors.py      # Mentor persona definitions (with per-mentor model support)
+│   ├── retriever.py    # Chunking, query expansion, BM25 retrieval (RAG)
 │   ├── file_parser.py  # PDF/DOCX/code file parsing
 │   └── static/         # Web UI (HTML/CSS/JS)
 ├── data/               # SQLite database (auto-created)
