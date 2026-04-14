@@ -15,6 +15,7 @@ import httpx
 from .mentors import MENTORS
 from .file_parser import parse_file
 from . import db
+from . import retriever
 
 logger = logging.getLogger("mentor-ai")
 
@@ -105,7 +106,15 @@ async def upload_file(file: UploadFile = File(...), mentor: str = Form("")):
 
     db.save_file_meta(file_id, file.filename, str(file_path), len(content_bytes), mentor)
 
-    return {"id": file_id, "name": file.filename, "size": len(content_bytes), "mentor": mentor}
+    # Chunk and index for retrieval
+    num_chunks = retriever.index_file(file_id, mentor, file.filename, text_content)
+    logger.info(f"Indexed {file.filename}: {num_chunks} chunks for [{mentor}]")
+
+    return {
+        "id": file_id, "name": file.filename,
+        "size": len(content_bytes), "mentor": mentor,
+        "chunks": num_chunks,
+    }
 
 
 @app.delete("/api/files/{file_id}")
@@ -117,9 +126,25 @@ async def delete_file(file_id: str):
         if os.path.exists(path):
             os.remove(path)
         db.delete_file_meta(file_id)
+        retriever.remove_file(file_id)
         _file_content_cache.pop(file_id, None)
         return {"ok": True}
     return JSONResponse({"error": "Not found"}, status_code=404)
+
+
+@app.post("/api/reindex")
+async def reindex_files(request: Request):
+    """Re-chunk and re-index all existing uploaded files."""
+    body = await request.json()
+    mentor = body.get("mentor", "")
+    files = db.get_files(mentor)
+    total_chunks = 0
+    for f in files:
+        content = _load_file_content(f["id"], f["path"], f["name"])
+        if content:
+            n = retriever.index_file(f["id"], f["mentor"], f["name"], content)
+            total_chunks += n
+    return {"ok": True, "files": len(files), "chunks": total_chunks}
 
 
 @app.get("/api/history/{mentor}")
@@ -140,16 +165,21 @@ async def chat(request: Request):
     mentor = MENTORS.get(mentor_key, MENTORS["embedded"])
     system_prompt = mentor["system_prompt"]
 
-    # Attach file context — only files belonging to this mentor
+    # Retrieve relevant file chunks using BM25 search
     mentor_files = db.get_files(mentor_key)
     if mentor_files:
-        file_context = "\n\n--- REFERENCE FILES (uploaded by student) ---\n"
-        for f in mentor_files:
-            content = _load_file_content(f["id"], f["path"], f["name"])
-            content = content[:6000]
-            truncated = " [truncated]" if len(content) >= 6000 else ""
-            file_context += f"\n### File: {f['name']}{truncated}\n```\n{content}\n```\n"
-        system_prompt += file_context
+        chunk_context = retriever.build_context(message, mentor_key)
+        if chunk_context:
+            system_prompt += chunk_context
+        else:
+            # No FTS hits — fall back to small snippet from each file
+            file_context = "\n\n--- REFERENCE FILES (uploaded by student) ---\n"
+            for f in mentor_files[:3]:
+                content = _load_file_content(f["id"], f["path"], f["name"])
+                content = content[:2000]
+                truncated = " [truncated]" if len(content) >= 2000 else ""
+                file_context += f"\n### File: {f['name']}{truncated}\n```\n{content}\n```\n"
+            system_prompt += file_context
 
     # Save user message to DB
     db.save_message(mentor_key, "user", message)

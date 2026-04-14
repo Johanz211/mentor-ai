@@ -61,6 +61,34 @@ def init_db():
             last_run TEXT DEFAULT (datetime('now'))
         );
     """)
+
+    # FTS5 virtual table for chunk-based retrieval
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS file_chunks USING fts5(
+                file_id UNINDEXED,
+                mentor UNINDEXED,
+                filename UNINDEXED,
+                chunk_idx UNINDEXED,
+                content,
+                tokenize='porter unicode61'
+            )
+        """)
+    except Exception:
+        # Fallback: plain table if FTS5 unavailable
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS file_chunks (
+                rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id TEXT NOT NULL,
+                mentor TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                chunk_idx INTEGER NOT NULL,
+                content TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fc_fileid ON file_chunks(file_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_fc_mentor ON file_chunks(mentor)")
+
     conn.commit()
     conn.close()
 
@@ -306,6 +334,100 @@ def get_all_mentors_with_messages() -> list[str]:
     ).fetchall()
     conn.close()
     return [r["mentor"] for r in rows]
+
+
+# ── File Chunks (FTS5 Retrieval) ──
+
+def _has_fts5() -> bool:
+    """Check if the file_chunks table is an FTS5 virtual table."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'file_chunks'"
+        ).fetchone()
+        conn.close()
+        return row is not None and "fts5" in (row["sql"] or "").lower()
+    except Exception:
+        conn.close()
+        return False
+
+
+def add_file_chunk(file_id: str, mentor: str, filename: str, chunk_idx: int, content: str):
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO file_chunks (file_id, mentor, filename, chunk_idx, content) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (file_id, mentor, filename, chunk_idx, content),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_file_chunks(file_id: str):
+    conn = _connect()
+    conn.execute("DELETE FROM file_chunks WHERE file_id = ?", (file_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_chunk_count(file_id: str) -> int:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT COUNT(*) as cnt FROM file_chunks WHERE file_id = ?", (file_id,)
+    ).fetchone()
+    conn.close()
+    return row["cnt"]
+
+
+def search_chunks_fts(fts_query: str, mentor: str, limit: int = 5) -> list[dict]:
+    """Search chunks using FTS5 BM25 ranking. Falls back to LIKE if FTS5 unavailable."""
+    conn = _connect()
+    results = []
+
+    if _has_fts5():
+        try:
+            rows = conn.execute(
+                "SELECT file_id, mentor, filename, chunk_idx, content, rank "
+                "FROM file_chunks WHERE file_chunks MATCH ? AND mentor = ? "
+                "ORDER BY rank LIMIT ?",
+                (fts_query, mentor, limit),
+            ).fetchall()
+            results = [
+                {"file_id": r["file_id"], "filename": r["filename"],
+                 "chunk_idx": r["chunk_idx"], "content": r["content"],
+                 "score": -r["rank"]}
+                for r in rows
+            ]
+        except Exception:
+            results = _search_chunks_fallback(conn, fts_query, mentor, limit)
+    else:
+        results = _search_chunks_fallback(conn, fts_query, mentor, limit)
+
+    conn.close()
+    return results
+
+
+def _search_chunks_fallback(conn, query_str: str, mentor: str, limit: int) -> list[dict]:
+    """Fallback search using LIKE when FTS5 is unavailable."""
+    terms = query_str.replace(" OR ", " ").split()
+    if not terms:
+        return []
+
+    # Build WHERE clause: content LIKE '%term1%' OR content LIKE '%term2%' ...
+    conditions = " OR ".join(["content LIKE ?"] * len(terms))
+    params = [f"%{t}%" for t in terms] + [mentor, limit]
+
+    rows = conn.execute(
+        f"SELECT file_id, filename, chunk_idx, content FROM file_chunks "
+        f"WHERE ({conditions}) AND mentor = ? LIMIT ?",
+        params,
+    ).fetchall()
+
+    return [
+        {"file_id": r["file_id"], "filename": r["filename"],
+         "chunk_idx": r["chunk_idx"], "content": r["content"], "score": 1.0}
+        for r in rows
+    ]
 
 
 # Initialize on import
