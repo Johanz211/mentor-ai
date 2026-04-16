@@ -54,6 +54,36 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # Metadata lives in SQLite; content is parsed fresh or cached here
 _file_content_cache = {}
 
+# Phrases that explicitly trigger RAG file search
+_RAG_TRIGGERS = [
+    "from the file", "from the manual", "from the doc", "from the pdf",
+    "from the reference", "check the file", "check the doc", "check the manual",
+    "in the file", "in the manual", "in the doc", "in the pdf",
+    "in the reference", "look up", "search the",
+]
+# Patterns that auto-trigger RAG (register names, hex addresses, section refs)
+import re as _re
+_RAG_AUTO_PATTERNS = _re.compile(
+    r'0x[0-9a-fA-F]{4,}'          # hex addresses (0x40020000)
+    r'|[A-Z]{2,}_[A-Z]{2,}'       # register-style names (GPIO_MODER, RCC_AHB1ENR)
+    r'|section\s+\d+\.\d+'        # section references (section 2.3.1)
+    r'|register\s+\w+'            # "register FLASH_CR"
+    r'|RM0368',                    # specific reference manual ID
+    _re.IGNORECASE
+)
+
+
+def _should_use_rag(message: str) -> bool:
+    """Determine if RAG retrieval should be used for this message."""
+    msg_lower = message.lower()
+    # Explicit trigger phrases
+    if any(trigger in msg_lower for trigger in _RAG_TRIGGERS):
+        return True
+    # Auto-detect: register names, hex addresses, section references
+    if _RAG_AUTO_PATTERNS.search(message):
+        return True
+    return False
+
 
 def _load_file_content(file_id: str, filepath: str, filename: str) -> str:
     """Load and cache parsed file content."""
@@ -165,21 +195,13 @@ async def chat(request: Request):
     mentor = MENTORS.get(mentor_key, MENTORS["embedded"])
     system_prompt = mentor["system_prompt"]
 
-    # Retrieve relevant file chunks using BM25 search
+    # RAG retrieval — only when explicitly requested or auto-detected
+    use_rag = _should_use_rag(message)
     mentor_files = db.get_files(mentor_key)
-    if mentor_files:
+    if mentor_files and use_rag:
         chunk_context = retriever.build_context(message, mentor_key)
         if chunk_context:
             system_prompt += chunk_context
-        else:
-            # No FTS hits — fall back to small snippet from each file
-            file_context = "\n\n--- REFERENCE FILES (uploaded by student) ---\n"
-            for f in mentor_files[:3]:
-                content = _load_file_content(f["id"], f["path"], f["name"])
-                content = content[:2000]
-                truncated = " [truncated]" if len(content) >= 2000 else ""
-                file_context += f"\n### File: {f['name']}{truncated}\n```\n{content}\n```\n"
-            system_prompt += file_context
 
     # Save user message to DB
     db.save_message(mentor_key, "user", message)
